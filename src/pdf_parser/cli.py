@@ -1,0 +1,76 @@
+"""Command-line interface for pdf-parser."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from pdf_parser.grobid.runtime import (
+    check_grobid_alive,
+    process_pdf_directory_to_tei,
+    process_pdf_to_tei,
+)
+
+_DEFAULT_URL = "http://localhost:8070"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="pdf-parser",
+        description="PDF parser bake-off framework",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    grobid = subparsers.add_parser("grobid", help="GROBID-related commands")
+    grobid_sub = grobid.add_subparsers(dest="grobid_command")
+
+    # grobid check
+    check = grobid_sub.add_parser("check", help="Check if GROBID service is alive")
+    check.add_argument("--url", default=_DEFAULT_URL, help="GROBID base URL")
+
+    # grobid process
+    process = grobid_sub.add_parser("process", help="Convert a single PDF to TEI XML")
+    process.add_argument("--pdf", required=True, help="Path to input PDF")
+    process.add_argument("--out", required=True, help="Path for output TEI XML")
+    process.add_argument("--url", default=_DEFAULT_URL, help="GROBID base URL")
+
+    # grobid batch
+    batch = grobid_sub.add_parser("batch", help="Convert a directory of PDFs to TEI XML")
+    batch.add_argument("--input-dir", required=True, help="Directory containing PDFs")
+    batch.add_argument("--out-dir", required=True, help="Output directory for TEI XML files")
+    batch.add_argument("--url", default=_DEFAULT_URL, help="GROBID base URL")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "grobid":
+        if args.grobid_command == "check":
+            alive = check_grobid_alive(args.url)
+            if alive:
+                print("GROBID is alive.")
+                sys.exit(0)
+            else:
+                print("GROBID is not reachable.")
+                sys.exit(1)
+
+        elif args.grobid_command == "process":
+            output = process_pdf_to_tei(Path(args.pdf), Path(args.out), args.url)
+            print(f"TEI written to: {output}")
+
+        elif args.grobid_command == "batch":
+            outputs = process_pdf_directory_to_tei(
+                Path(args.input_dir), Path(args.out_dir), args.url
+            )
+            for p in outputs:
+                print(str(p))
+
+        else:
+            parser.parse_args(["grobid", "--help"])
+
+    else:
+        parser.print_help()

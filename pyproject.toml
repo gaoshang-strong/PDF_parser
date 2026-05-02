@@ -9,7 +9,11 @@ description = "PDF parser bake-off framework for scientific and biomedical PDFs"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
+    "requests>=2.28",
 ]
+
+[project.scripts]
+pdf-parser = "pdf_parser.cli:main"
 
 [project.optional-dependencies]
 dev = [
