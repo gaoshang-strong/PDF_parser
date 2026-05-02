@@ -61,6 +61,15 @@ def _build_parser() -> argparse.ArgumentParser:
     pm_parse.add_argument("--pdf", required=True, help="Path to input PDF")
     pm_parse.add_argument("--out", required=True, help="Path for output JSON file")
 
+    # docling
+    docling = subparsers.add_parser("docling", help="Docling-related commands")
+    docling_sub = docling.add_subparsers(dest="docling_command")
+
+    # docling parse
+    dl_parse = docling_sub.add_parser("parse", help="Parse a PDF with Docling")
+    dl_parse.add_argument("--pdf", required=True, help="Path to input PDF")
+    dl_parse.add_argument("--out", required=True, help="Path for output JSON file")
+
     return parser
 
 
@@ -108,6 +117,17 @@ def main(argv: list[str] | None = None) -> None:
 
         else:
             parser.parse_args(["pymupdf", "--help"])
+
+    elif args.command == "docling":
+        if args.docling_command == "parse":
+            from pdf_parser.parsers.docling_adapter import parse_pdf_with_docling
+            candidate = parse_pdf_with_docling(Path(args.pdf))
+            out_path = Path(args.out)
+            write_pretty_json(out_path, candidate.model_dump(mode="json"))
+            print(f"ParsedCandidate written to: {out_path}")
+
+        else:
+            parser.parse_args(["docling", "--help"])
 
     else:
         parser.print_help()
