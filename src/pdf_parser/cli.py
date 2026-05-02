@@ -79,6 +79,16 @@ def _build_parser() -> argparse.ArgumentParser:
     mk_parse.add_argument("--pdf", required=True, help="Path to input PDF")
     mk_parse.add_argument("--out", required=True, help="Path for output JSON file")
 
+    # mineru
+    mineru = subparsers.add_parser("mineru", help="MinerU API-related commands")
+    mineru_sub = mineru.add_subparsers(dest="mineru_command")
+
+    # mineru parse
+    mn_parse = mineru_sub.add_parser("parse", help="Parse a PDF via the MinerU cloud API")
+    mn_parse.add_argument("--pdf", required=True, help="Path to input PDF")
+    mn_parse.add_argument("--work-dir", required=True, help="Working directory for raw API output")
+    mn_parse.add_argument("--out", required=True, help="Path for output ParsedCandidate JSON")
+
     return parser
 
 
@@ -148,6 +158,17 @@ def main(argv: list[str] | None = None) -> None:
 
         else:
             parser.parse_args(["marker", "--help"])
+
+    elif args.command == "mineru":
+        if args.mineru_command == "parse":
+            from pdf_parser.parsers.mineru_api_adapter import parse_pdf_with_mineru_api
+            candidate = parse_pdf_with_mineru_api(Path(args.pdf), Path(args.work_dir))
+            out_path = Path(args.out)
+            write_pretty_json(out_path, candidate.model_dump(mode="json"))
+            print(f"ParsedCandidate written to: {out_path}")
+
+        else:
+            parser.parse_args(["mineru", "--help"])
 
     else:
         parser.print_help()
