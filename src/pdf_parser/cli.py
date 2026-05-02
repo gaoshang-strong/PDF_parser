@@ -70,6 +70,15 @@ def _build_parser() -> argparse.ArgumentParser:
     dl_parse.add_argument("--pdf", required=True, help="Path to input PDF")
     dl_parse.add_argument("--out", required=True, help="Path for output JSON file")
 
+    # marker
+    marker = subparsers.add_parser("marker", help="Marker-related commands")
+    marker_sub = marker.add_subparsers(dest="marker_command")
+
+    # marker parse
+    mk_parse = marker_sub.add_parser("parse", help="Parse a PDF with Marker")
+    mk_parse.add_argument("--pdf", required=True, help="Path to input PDF")
+    mk_parse.add_argument("--out", required=True, help="Path for output JSON file")
+
     return parser
 
 
@@ -128,6 +137,17 @@ def main(argv: list[str] | None = None) -> None:
 
         else:
             parser.parse_args(["docling", "--help"])
+
+    elif args.command == "marker":
+        if args.marker_command == "parse":
+            from pdf_parser.parsers.marker_adapter import parse_pdf_with_marker
+            candidate = parse_pdf_with_marker(Path(args.pdf))
+            out_path = Path(args.out)
+            write_pretty_json(out_path, candidate.model_dump(mode="json"))
+            print(f"ParsedCandidate written to: {out_path}")
+
+        else:
+            parser.parse_args(["marker", "--help"])
 
     else:
         parser.print_help()
