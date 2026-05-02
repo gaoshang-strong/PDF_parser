@@ -81,8 +81,17 @@ class CandidateDiagnostics(BaseModel):
     notes: Optional[str] = None
 
 
+class ArticleMetadata(BaseModel):
+    title: Optional[str] = None
+    doi: Optional[str] = None
+    journal: Optional[str] = None
+    year: Optional[str] = None
+    authors: list[str] = Field(default_factory=list)
+
+
 class ParsedCandidate(BaseModel):
     provenance: ParserProvenance
+    metadata: Optional[ArticleMetadata] = None
     pages: list[ParsedPage] = Field(default_factory=list)
     blocks: list[ParsedBlock] = Field(default_factory=list)
     sections: list[ParsedSection] = Field(default_factory=list)
