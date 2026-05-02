@@ -1,0 +1,9 @@
+data/
+*.pdf
+*.tei.xml
+*.jsonl
+*.parquet
+__pycache__/
+.pytest_cache/
+.venv/
+.env
