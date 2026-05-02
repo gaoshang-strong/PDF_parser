@@ -173,6 +173,12 @@ docker run -d --init \
   grobid/grobid:0.9.0
 ```
 
+### Stop GROBID:
+
+```
+docker stop grobid
+```
+
 ### Convert one PDF to TEI XML
 
 Example:
