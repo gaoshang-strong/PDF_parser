@@ -37,7 +37,14 @@ Core pipeline goals:
 
 Before claiming a parser change is complete, run the relevant tests.
 
-Preferred commands:
 
-```bash
-python -m pytest
+# PDF_parser notes for Claude Code
+
+## Repo
+- Local: `/ShangGaoAIProjects/PDF_parser`
+- GitHub: `git@github.com:gaoshang-strong/PDF_parser.git`
+
+## Environments
+- `PDF_parser`: main env. Use for base project, PyMuPDF, GROBID TEI adapter, Docling, Marker, tests, CLI, XML export.
+- `PDF_parser_mineru`: MinerU-only env, because MinerU needs `pillow>=11`, while Marker/surya need `pillow<11`.
+
