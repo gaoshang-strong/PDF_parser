@@ -1,279 +1,353 @@
 # PDF_parser
 
-PDF_parser is a bake-off framework for comparing PDF parsers on scientific / biomedical PDFs, especially review papers.
+A bake-off framework for comparing PDF parsers on scientific and biomedical PDFs, especially review articles. All parser backends produce a single unified `ParsedCandidate` schema, suitable for downstream LLM evidence extraction.
 
-The goal is to evaluate which parser output is most suitable for downstream LLM evidence extraction.
+Supported backends:
+
+| Backend | What it does | Requires |
+|---|---|---|
+| PyMuPDF | Native text/block extraction, font/layout signals, heading detection | `PDF_parser` env |
+| GROBID | Academic-document parser via Docker service, produces TEI XML | Docker + `PDF_parser` env |
+| Docling | Optional; structured document/Markdown parsing | `PDF_parser` env |
+| Marker | Optional; Markdown/JSON output from PDF layout | `PDF_parser` env |
+| MinerU API | Optional; cloud API, no local GPU needed | `PDF_parser` env + API token |
+
+---
 
 ## Repository
 
-GitHub:
-
-```bash
-git@github.com:gaoshang-strong/PDF_parser.git
+```
+GitHub: git@github.com:gaoshang-strong/PDF_parser.git
+Local:  /ShangGaoAIProjects/PDF_parser
 ```
 
-Local path on the server:
+---
 
-```bash
-/ShangGaoAIProjects/PDF_parser
-```
+## Setup
 
-## Python environments
+### Python environments
 
-### Main environment
+Two micromamba environments are used because MinerU requires `pillow>=11` while Marker requires `pillow<11`.
+
+**Main environment** — used for everything except local MinerU:
 
 ```bash
 micromamba activate PDF_parser
 ```
 
-Used for:
-
-- Base project code
-- PyMuPDF
-- GROBID TEI adapter
-- Docling
-- Marker
-- Tests
-- CLI
-- Evidence XML export
-
-### MinerU environment
+**MinerU environment** — only needed if running MinerU locally (not needed for the API adapter):
 
 ```bash
 micromamba activate PDF_parser_mineru
 ```
 
-MinerU is kept in a separate environment because MinerU requires `pillow>=11`, while Marker / surya require `pillow<11`.
-
-## Python package installation rule
-
-Always install Python packages through the active environment's Python:
+### Install the package (editable)
 
 ```bash
-python -m pip install ...
+micromamba activate PDF_parser
+cd /ShangGaoAIProjects/PDF_parser
+python -m pip install -e ".[dev]"
 ```
 
-Do not use plain `pip install ...`.
+This installs the `pdf-parser` CLI entry point.
 
-## Installed / planned tools
+> Always install packages with `python -m pip install`, not plain `pip install`.
+
+### Run tests
+
+```bash
+/home/sgao30/micromamba/bin/micromamba run -n PDF_parser python -m pytest
+```
+
+All tests use mocks. No external services or API tokens are required.
+
+---
+
+## CLI reference
+
+The entry point is `pdf-parser`. Every command writes a pretty-printed JSON file conforming to `ParsedCandidate`.
 
 ### PyMuPDF
 
-Environment:
-
-```text
-PDF_parser
-```
-
-Purpose:
-
-- Native PDF text extraction
-- Text blocks
-- Bounding boxes
-- Font/layout signals
-- Heading candidates
-- Reading order analysis
-
-### Docling
-
-Environment:
-
-```text
-PDF_parser
-```
-
-Purpose:
-
-- Optional parser backend
-- Convert PDF into structured document / Markdown / JSON
-- Convert Docling output into the unified `ParsedCandidate` schema
-
-### Marker
-
-Environment:
-
-```text
-PDF_parser
-```
-
-Purpose:
-
-- Optional parser backend
-- Convert PDF into Markdown / JSON
-- Convert Marker output into the unified `ParsedCandidate` schema
-
-### MinerU
-
-Environment:
-
-```text
-PDF_parser_mineru
-```
-
-Purpose:
-
-- Optional parser backend
-- Run MinerU separately and export Markdown / JSON
-- Main project reads MinerU output and converts it into the unified `ParsedCandidate` schema
-
-Recommended way to call MinerU from the main project:
+Parse a PDF with native PyMuPDF (no external services needed):
 
 ```bash
-micromamba run -n PDF_parser_mineru mineru ...
+pdf-parser pymupdf parse \
+  --pdf  data/raw_pdfs/paper.pdf \
+  --out  data/parsed_candidates/pymupdf_native/paper.json
 ```
 
-## GROBID
+### GROBID
 
-GROBID is installed through Docker.
-
-Docker image:
+GROBID runs as a Docker service. Start it first:
 
 ```bash
-grobid/grobid:0.9.0
-```
+# Create container (first time only)
+docker run -d --init --name grobid -p 127.0.0.1:8070:8070 grobid/grobid:0.9.0
 
-GROBID service URL:
-
-```text
-http://localhost:8070
-```
-
-### Start GROBID each time
-
-If the container already exists:
-
-```bash
+# Start if already created
 docker start grobid
+
+# Verify
+pdf-parser grobid check
+# or: curl http://localhost:8070/api/isalive  →  true
 ```
 
-Check that it is running:
+Convert one PDF to TEI XML, then parse it:
 
 ```bash
-docker ps | grep -i grobid
+pdf-parser grobid process \
+  --pdf  data/raw_pdfs/paper.pdf \
+  --out  data/grobid_tei/paper.tei.xml
+
+pdf-parser grobid parse-tei \
+  --tei  data/grobid_tei/paper.tei.xml \
+  --pdf  data/raw_pdfs/paper.pdf \
+  --out  data/parsed_candidates/grobid/paper.json
 ```
 
-Check the API:
+Batch convert a directory of PDFs to TEI XML:
 
 ```bash
-curl http://localhost:8070/api/isalive
+pdf-parser grobid batch \
+  --input-dir  data/raw_pdfs \
+  --out-dir    data/grobid_tei
 ```
 
-Expected output:
-
-```text
-true
-```
-
-### Create the GROBID container if it does not exist
+Stop GROBID when done:
 
 ```bash
-docker run -d --init \
-  --name grobid \
-  -p 127.0.0.1:8070:8070 \
-  grobid/grobid:0.9.0
-```
-
-### Stop GROBID:
-
-```
 docker stop grobid
 ```
 
-### Convert one PDF to TEI XML
-
-Example:
+### Docling (optional)
 
 ```bash
-mkdir -p data/grobid_tei
-
-curl -X POST \
-  -F input=@data/raw_pdfs/test.pdf \
-  http://localhost:8070/api/processFulltextDocument \
-  -o data/grobid_tei/test.tei.xml
+pdf-parser docling parse \
+  --pdf  data/raw_pdfs/paper.pdf \
+  --out  data/parsed_candidates/docling/paper.json
 ```
 
-First version of this project reads external GROBID TEI files. It does not need to manage the GROBID server runtime inside the Python code.
+Raises `ImportError` with a clear message if Docling is not installed.
 
-## Data policy
+### Marker (optional)
 
-The `data/` directory must not be committed to Git.
+```bash
+pdf-parser marker parse \
+  --pdf  data/raw_pdfs/paper.pdf \
+  --out  data/parsed_candidates/marker/paper.json
+```
 
-Expected local data layout:
+Raises `ImportError` with a clear message if Marker is not installed.
 
-```text
-data/
+### MinerU API (optional)
+
+Requires an API token from [mineru.net](https://mineru.net). Set it as an environment variable — never hard-code it.
+
+```bash
+export MINERU_API_TOKEN="your-token-here"
+
+pdf-parser mineru parse \
+  --pdf       data/raw_pdfs/paper.pdf \
+  --work-dir  data/mineru_work \
+  --out       data/parsed_candidates/mineru_api/paper.json
+```
+
+`--work-dir` is a scratch directory where the raw result ZIP is downloaded and extracted before parsing. It is safe to reuse across runs.
+
+The adapter prints progress:
+
+```
+[mineru] Registering paper.pdf (1,313,897 bytes, model=vlm)...
+[mineru] Uploading to OSS (batch_id=d13d548c-...)...
+[mineru] Upload complete. Polling for extraction result...
+[mineru] batch_id=d13d548c-... state='pending'
+[mineru] batch_id=d13d548c-... state='running'
+[mineru] batch_id=d13d548c-... state='done'
+[mineru] Extraction done. Downloading result ZIP...
+[mineru] ZIP downloaded (1,214,663 bytes). Extracting...
+[mineru] Extraction complete. Parsing output...
+ParsedCandidate written to: data/parsed_candidates/mineru_api/paper.json
+```
+
+#### Run all PDFs
+
+```bash
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/mineru_api/${stem}.json"
+  if [ -f "$out" ]; then
+    echo "=== $stem — already done, skipping ==="
+    continue
+  fi
+  echo "=== $stem ==="
+  pdf-parser mineru parse \
+    --pdf      "$pdf" \
+    --work-dir data/mineru_work \
+    --out      "$out"
+done
+```
+
+---
+
+## Output schema
+
+Every parser writes a JSON file with this structure:
+
+```json
+{
+  "provenance": {
+    "parser_name": "mineru_api",
+    "parser_version": "unknown",
+    "created_at": "2026-05-02T10:25:43.123456+00:00",
+    "input_sha256": "abc123...",
+    "output_sha256": "def456..."
+  },
+  "metadata": {
+    "title": null,
+    "doi": null,
+    "journal": null,
+    "year": null,
+    "authors": []
+  },
+  "pages": [
+    {"page_id": "page_1", "page_number": 1, "width": 612.0, "height": 792.0}
+  ],
+  "blocks": [
+    {
+      "block_id": "blk_1",
+      "page": 1,
+      "text": "Introduction",
+      "bbox": [72.0, 100.0, 300.0, 115.0],
+      "block_type": "heading",
+      "reading_order": 1,
+      "font_size": 14.0,
+      "font_name": "Arial-Bold",
+      "is_bold": true,
+      "source_parser": "pymupdf_native"
+    }
+  ],
+  "sections": [
+    {
+      "section_id": "sec_1",
+      "title": "Introduction",
+      "normalized_title": "introduction",
+      "level": 1,
+      "parent_section_id": null,
+      "block_ids": ["blk_1", "blk_2"],
+      "text": "Introduction\n\nThis paper presents...",
+      "start_page": 1,
+      "end_page": 2,
+      "confidence": null,
+      "source_parser": "pymupdf_native"
+    }
+  ],
+  "figures": [
+    {"figure_id": "fig_1", "page": 3, "bbox": null, "caption_id": "cap_1", "source_parser": "mineru_api"}
+  ],
+  "tables": [
+    {"table_id": "tbl_1", "page": 4, "bbox": null, "caption_id": "cap_2", "source_parser": "mineru_api"}
+  ],
+  "captions": [
+    {"caption_id": "cap_1", "text": "Figure 1. Overview of the pipeline.", "page": 3, "bbox": null}
+  ],
+  "diagnostics": {
+    "parse_duration_seconds": null,
+    "warnings": [],
+    "error_count": 0,
+    "notes": null
+  }
+}
+```
+
+Field notes:
+
+- `block_type`: `"text"` | `"heading"` | `"image"` | `"table"`
+- `bbox`: `[x0, y0, x1, y1]` in PDF points; `null` when not available from that parser
+- `sections[].block_ids`: ordered list of block IDs belonging to this section
+- `sections[].text`: concatenated text of all body blocks under this section
+- `provenance.output_sha256`: SHA-256 of the canonical (sorted-keys) JSON of the output, computed at write time
+
+---
+
+## Project layout
+
+```
+src/pdf_parser/
+├── cli.py                   # pdf-parser entry point
+├── schema/
+│   ├── candidate.py         # ParsedCandidate and all sub-models (Pydantic v2)
+│   └── hashes.py            # sha256_file, compute_candidate_output_sha256
+├── parsers/
+│   ├── pymupdf_native.py    # PyMuPDF adapter
+│   ├── grobid_tei.py        # GROBID TEI XML → ParsedCandidate
+│   ├── docling_adapter.py   # Docling → ParsedCandidate (optional)
+│   ├── marker_adapter.py    # Marker → ParsedCandidate (optional)
+│   └── mineru_api_adapter.py# MinerU cloud API → ParsedCandidate (optional)
+├── grobid/
+│   └── runtime.py           # GROBID Docker service helpers
+└── export/
+    └── json_writer.py       # write_pretty_json (indent=2, sorted keys, UTF-8)
+
+tests/
+├── fixtures/                # TEI XML fixtures for GROBID tests
+└── test_*.py                # One test file per module; all mocked
+
+data/                        # Not committed to Git
 ├── raw_pdfs/
 ├── grobid_tei/
 ├── parsed_candidates/
-├── reports/
-└── selected_xml/
+│   ├── pymupdf_native/
+│   ├── docling/
+│   ├── marker/
+│   └── mineru_api/
+├── mineru_work/
+└── reports/
 ```
 
-## Git rules
+---
 
-Do not commit:
+## Using the Python API directly
 
-- `data/`
-- PDFs
-- TEI XML files
-- large parser outputs
-- `.env`
-- Python cache directories
+```python
+from pathlib import Path
+from pdf_parser.parsers.pymupdf_native import parse_pdf_with_pymupdf
+from pdf_parser.parsers.mineru_api_adapter import parse_pdf_with_mineru_api
+from pdf_parser.export.json_writer import write_pretty_json
 
-Recommended `.gitignore` entries:
+# PyMuPDF
+candidate = parse_pdf_with_pymupdf(Path("paper.pdf"))
 
-```gitignore
-data/
-*.pdf
-*.tei.xml
-*.jsonl
-*.parquet
-__pycache__/
-.pytest_cache/
-.venv/
-.env
+# MinerU API (token from MINERU_API_TOKEN env var)
+candidate = parse_pdf_with_mineru_api(
+    pdf_path=Path("paper.pdf"),
+    work_dir=Path("mineru_work"),
+)
+
+# Inspect
+print(candidate.provenance.parser_name)
+print(len(candidate.blocks), "blocks")
+print(len(candidate.sections), "sections")
+for sec in candidate.sections:
+    print(f"  {'  ' * (sec.level - 1)}{sec.title}")
+
+# Save
+write_pretty_json(Path("output.json"), candidate.model_dump(mode="json"))
 ```
 
-## Project rules
+---
 
-- Do not assume any parser is the ground truth.
-- All parser outputs must be converted into a unified `ParsedCandidate` schema.
-- Docling, Marker, and MinerU must remain optional backends.
-- Missing optional backends should give clear errors.
-- Tests must not depend on external APIs.
-- Do not use broad `try/except` blocks to hide errors.
-- Pretty-print all JSON outputs.
-- Every parser output must record:
-  - `parser_name`
-  - `parser_version`
-  - `created_at`
-  - `input_sha256`
-  - `output_sha256`
-- Run `pytest` after each milestone.
-- Do not auto-commit.
+## Data policy
 
-## Main milestones
+The `data/` directory is not committed to Git. Do not commit PDFs, TEI XML, parsed JSON outputs, or API tokens.
 
-1. Project skeleton and unified schema
-2. GROBID TEI adapter
-3. Native PyMuPDF adapter
-4. Parsing quality metrics
-5. Bake-off runner
-6. Evidence XML exporter
-7. Optional backends: Docling, Marker, MinerU
+---
 
-## Final output goal
+## Development rules
 
-The most important output is an XML file for downstream LLM evidence extraction.
-
-The selected XML should preserve:
-
-- Section hierarchy
-- Section titles
-- Reading order
-- Page and block provenance
-- Figure captions
-- Table captions
-- Parser provenance
-- Recovered or disputed sections
-
+- No broad `try/except` to hide errors — let them surface.
+- No placeholder functions or fake test results.
+- Parsing logic is kept separate from I/O, CLI, and reporting.
+- Add or update tests when changing parser behaviour.
+- All outputs record `parser_name`, `parser_version`, `created_at`, `input_sha256`, `output_sha256`.
+- Run `pytest` before claiming a change is complete.
