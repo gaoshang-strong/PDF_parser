@@ -270,6 +270,142 @@ Field notes:
 
 ---
 
+## Batch processing all PDFs (all five parsers)
+
+The commands below skip any PDF that already has an output JSON, so they are safe to re-run after a partial run.
+
+Run everything from the repo root with the `PDF_parser` environment active (or prefix each command with `/home/sgao30/micromamba/bin/micromamba run -n PDF_parser`).
+
+### 1. PyMuPDF
+
+```bash
+mkdir -p data/parsed_candidates/pymupdf_native
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/pymupdf_native/${stem}.json"
+  [ -f "$out" ] && echo "skip $stem" && continue
+  echo "=== pymupdf $stem ==="
+  pdf-parser pymupdf parse --pdf "$pdf" --out "$out"
+done
+```
+
+### 2. GROBID
+
+Start the Docker service first (see the GROBID section above), then:
+
+```bash
+mkdir -p data/grobid_tei data/parsed_candidates/grobid
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/grobid/${stem}.json"
+  [ -f "$out" ] && echo "skip $stem" && continue
+  echo "=== grobid $stem ==="
+  pdf-parser grobid process --pdf "$pdf" --out "data/grobid_tei/${stem}.tei.xml"
+  pdf-parser grobid parse-tei \
+    --tei "data/grobid_tei/${stem}.tei.xml" \
+    --pdf "$pdf" \
+    --out "$out"
+done
+```
+
+### 3. Docling
+
+```bash
+mkdir -p data/parsed_candidates/docling
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/docling/${stem}.json"
+  [ -f "$out" ] && echo "skip $stem" && continue
+  echo "=== docling $stem ==="
+  pdf-parser docling parse --pdf "$pdf" --out "$out"
+done
+```
+
+### 4. Marker
+
+```bash
+mkdir -p data/parsed_candidates/marker
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/marker/${stem}.json"
+  [ -f "$out" ] && echo "skip $stem" && continue
+  echo "=== marker $stem ==="
+  pdf-parser marker parse --pdf "$pdf" --out "$out"
+done
+```
+
+### 5. MinerU API
+
+Requires `MINERU_API_TOKEN`. Each PDF takes ~30–60 s (upload + cloud processing). Run sequentially to stay within rate limits.
+
+```bash
+export MINERU_API_TOKEN="your-token-here"
+mkdir -p data/parsed_candidates/mineru_api data/mineru_work
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  out="data/parsed_candidates/mineru_api/${stem}.json"
+  [ -f "$out" ] && echo "skip $stem" && continue
+  echo "=== mineru $stem ==="
+  pdf-parser mineru parse \
+    --pdf      "$pdf" \
+    --work-dir data/mineru_work \
+    --out      "$out"
+done
+```
+
+### Run all five in sequence
+
+```bash
+export MINERU_API_TOKEN="your-token-here"
+
+mkdir -p data/parsed_candidates/{pymupdf_native,grobid,docling,marker,mineru_api} \
+         data/grobid_tei data/mineru_work
+
+for pdf in data/raw_pdfs/*.pdf; do
+  stem=$(basename "$pdf" .pdf)
+  echo ""
+  echo "==============================="
+  echo "PDF: $stem"
+  echo "==============================="
+
+  out="data/parsed_candidates/pymupdf_native/${stem}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser pymupdf parse --pdf "$pdf" --out "$out"
+  fi
+
+  tei="data/grobid_tei/${stem}.tei.xml"
+  out="data/parsed_candidates/grobid/${stem}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser grobid process --pdf "$pdf" --out "$tei"
+    pdf-parser grobid parse-tei --tei "$tei" --pdf "$pdf" --out "$out"
+  fi
+
+  out="data/parsed_candidates/docling/${stem}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser docling parse --pdf "$pdf" --out "$out"
+  fi
+
+  out="data/parsed_candidates/marker/${stem}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser marker parse --pdf "$pdf" --out "$out"
+  fi
+
+  out="data/parsed_candidates/mineru_api/${stem}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser mineru parse --pdf "$pdf" --work-dir data/mineru_work --out "$out"
+  fi
+done
+```
+
+> GROBID must be running before the loop starts. Docling and Marker raise `ImportError` if the packages are not installed — the loop will abort on that PDF; install the package and re-run (already-done PDFs are skipped).
+
+---
+
 ## Project layout
 
 ```
