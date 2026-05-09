@@ -17,7 +17,8 @@
       "Bash(git *)",
       "Bash(/home/sgao30/micromamba/envs/PDF_parser/bin/python -c \"import requests; print\\('requests:', requests.__version__\\)\")",
       "Bash(/home/sgao30/micromamba/envs/PDF_parser/bin/python -m pip install -e \"/ShangGaoAIProjects/PDF_parser\" -q)",
-      "Bash(/home/sgao30/micromamba/envs/PDF_parser/bin/python *)"
+      "Bash(/home/sgao30/micromamba/envs/PDF_parser/bin/python *)",
+      "Bash(/home/sgao30/micromamba/bin/micromamba run *)"
     ],
     "deny": [
       "Bash(rm -rf *)",

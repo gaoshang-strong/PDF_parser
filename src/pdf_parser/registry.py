@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pdf_parser.schema.hashes import sha256_file
-
 _REGISTRY_FILENAME = "registry.json"
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def paper_id_from_sha256(sha256: str) -> str:
@@ -49,7 +56,7 @@ def register_paper(pdf_path: Path, papers_dir: Path) -> str:
         raise ValueError(f"Expected a .pdf file (got '{pdf_path.suffix}'): {pdf_path}")
 
     papers_dir = Path(papers_dir)
-    sha256 = sha256_file(pdf_path)
+    sha256 = _sha256_file(pdf_path)
     paper_id = paper_id_from_sha256(sha256)
 
     registry = load_registry(papers_dir)
