@@ -9,7 +9,6 @@ description = "PDF parser bake-off framework for scientific and biomedical PDFs"
 requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
-    "pymupdf>=1.20",
     "requests>=2.28",
 ]
 

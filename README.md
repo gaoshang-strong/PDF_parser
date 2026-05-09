@@ -1,16 +1,13 @@
 # PDF_parser
 
-A bake-off framework for comparing PDF parsers on scientific and biomedical PDFs, especially review articles. All parser backends produce a single unified `ParsedCandidate` schema, suitable for downstream LLM evidence extraction.
+A pipeline for parsing scientific and biomedical PDFs using GROBID and the MinerU cloud API. Both parsers produce a unified `ParsedCandidate` schema suitable for downstream LLM evidence extraction.
 
 Supported backends:
 
 | Backend | What it does | Requires |
 |---|---|---|
-| PyMuPDF | Native text/block extraction, font/layout signals, heading detection | `PDF_parser` env |
 | GROBID | Academic-document parser via Docker service, produces TEI XML | Docker + `PDF_parser` env |
-| Docling | Optional; structured document/Markdown parsing | `PDF_parser` env |
-| Marker | Optional; Markdown/JSON output from PDF layout | `PDF_parser` env |
-| MinerU API | Optional; cloud API, no local GPU needed | `PDF_parser` env + API token |
+| MinerU API | Cloud API, no local GPU needed | `PDF_parser` env + API token |
 
 ---
 
@@ -67,16 +64,6 @@ All tests use mocks. No external services or API tokens are required.
 
 The entry point is `pdf-parser`. Every command writes a pretty-printed JSON file conforming to `ParsedCandidate`.
 
-### PyMuPDF
-
-Parse a PDF with native PyMuPDF (no external services needed):
-
-```bash
-pdf-parser pymupdf parse \
-  --pdf  data/raw_pdfs/paper.pdf \
-  --out  data/parsed_candidates/pymupdf_native/paper.json
-```
-
 ### GROBID
 
 GROBID runs as a Docker service. Start it first:
@@ -120,27 +107,7 @@ Stop GROBID when done:
 docker stop grobid
 ```
 
-### Docling (optional)
-
-```bash
-pdf-parser docling parse \
-  --pdf  data/raw_pdfs/paper.pdf \
-  --out  data/parsed_candidates/docling/paper.json
-```
-
-Raises `ImportError` with a clear message if Docling is not installed.
-
-### Marker (optional)
-
-```bash
-pdf-parser marker parse \
-  --pdf  data/raw_pdfs/paper.pdf \
-  --out  data/parsed_candidates/marker/paper.json
-```
-
-Raises `ImportError` with a clear message if Marker is not installed.
-
-### MinerU API (optional)
+### MinerU API
 
 Requires an API token from [mineru.net](https://mineru.net). Set it as an environment variable — never hard-code it.
 
@@ -270,27 +237,13 @@ Field notes:
 
 ---
 
-## Batch processing all PDFs (all five parsers)
+## Batch processing all PDFs
 
 The commands below skip any PDF that already has an output JSON, so they are safe to re-run after a partial run.
 
 Run everything from the repo root with the `PDF_parser` environment active (or prefix each command with `/home/sgao30/micromamba/bin/micromamba run -n PDF_parser`).
 
-### 1. PyMuPDF
-
-```bash
-mkdir -p data/parsed_candidates/pymupdf_native
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/pymupdf_native/${stem}.json"
-  [ -f "$out" ] && echo "skip $stem" && continue
-  echo "=== pymupdf $stem ==="
-  pdf-parser pymupdf parse --pdf "$pdf" --out "$out"
-done
-```
-
-### 2. GROBID
+### 1. GROBID
 
 Start the Docker service first (see the GROBID section above), then:
 
@@ -310,35 +263,7 @@ for pdf in data/raw_pdfs/*.pdf; do
 done
 ```
 
-### 3. Docling
-
-```bash
-mkdir -p data/parsed_candidates/docling
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/docling/${stem}.json"
-  [ -f "$out" ] && echo "skip $stem" && continue
-  echo "=== docling $stem ==="
-  pdf-parser docling parse --pdf "$pdf" --out "$out"
-done
-```
-
-### 4. Marker
-
-```bash
-mkdir -p data/parsed_candidates/marker
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/marker/${stem}.json"
-  [ -f "$out" ] && echo "skip $stem" && continue
-  echo "=== marker $stem ==="
-  pdf-parser marker parse --pdf "$pdf" --out "$out"
-done
-```
-
-### 5. MinerU API
+### 2. MinerU API
 
 Requires `MINERU_API_TOKEN`. Each PDF takes ~30–60 s (upload + cloud processing). Run sequentially to stay within rate limits.
 
@@ -358,12 +283,12 @@ for pdf in data/raw_pdfs/*.pdf; do
 done
 ```
 
-### Run all five in sequence
+### Run both in sequence
 
 ```bash
 export MINERU_API_TOKEN="your-token-here"
 
-mkdir -p data/parsed_candidates/{pymupdf_native,grobid,docling,marker,mineru_api} \
+mkdir -p data/parsed_candidates/{grobid,mineru_api} \
          data/grobid_tei data/mineru_work
 
 for pdf in data/raw_pdfs/*.pdf; do
@@ -373,26 +298,11 @@ for pdf in data/raw_pdfs/*.pdf; do
   echo "PDF: $stem"
   echo "==============================="
 
-  out="data/parsed_candidates/pymupdf_native/${stem}.json"
-  if [ ! -f "$out" ]; then
-    pdf-parser pymupdf parse --pdf "$pdf" --out "$out"
-  fi
-
   tei="data/grobid_tei/${stem}.tei.xml"
   out="data/parsed_candidates/grobid/${stem}.json"
   if [ ! -f "$out" ]; then
     pdf-parser grobid process --pdf "$pdf" --out "$tei"
     pdf-parser grobid parse-tei --tei "$tei" --pdf "$pdf" --out "$out"
-  fi
-
-  out="data/parsed_candidates/docling/${stem}.json"
-  if [ ! -f "$out" ]; then
-    pdf-parser docling parse --pdf "$pdf" --out "$out"
-  fi
-
-  out="data/parsed_candidates/marker/${stem}.json"
-  if [ ! -f "$out" ]; then
-    pdf-parser marker parse --pdf "$pdf" --out "$out"
   fi
 
   out="data/parsed_candidates/mineru_api/${stem}.json"
@@ -402,7 +312,7 @@ for pdf in data/raw_pdfs/*.pdf; do
 done
 ```
 
-> GROBID must be running before the loop starts. Docling and Marker raise `ImportError` if the packages are not installed — the loop will abort on that PDF; install the package and re-run (already-done PDFs are skipped).
+> GROBID must be running before the loop starts.
 
 ---
 
@@ -415,11 +325,8 @@ src/pdf_parser/
 │   ├── candidate.py         # ParsedCandidate and all sub-models (Pydantic v2)
 │   └── hashes.py            # sha256_file, compute_candidate_output_sha256
 ├── parsers/
-│   ├── pymupdf_native.py    # PyMuPDF adapter
 │   ├── grobid_tei.py        # GROBID TEI XML → ParsedCandidate
-│   ├── docling_adapter.py   # Docling → ParsedCandidate (optional)
-│   ├── marker_adapter.py    # Marker → ParsedCandidate (optional)
-│   └── mineru_api_adapter.py# MinerU cloud API → ParsedCandidate (optional)
+│   └── mineru_api_adapter.py# MinerU cloud API → ParsedCandidate
 ├── grobid/
 │   └── runtime.py           # GROBID Docker service helpers
 └── export/
@@ -433,9 +340,7 @@ data/                        # Not committed to Git
 ├── raw_pdfs/
 ├── grobid_tei/
 ├── parsed_candidates/
-│   ├── pymupdf_native/
-│   ├── docling/
-│   ├── marker/
+│   ├── grobid/
 │   └── mineru_api/
 ├── mineru_work/
 └── reports/
@@ -447,12 +352,12 @@ data/                        # Not committed to Git
 
 ```python
 from pathlib import Path
-from pdf_parser.parsers.pymupdf_native import parse_pdf_with_pymupdf
+from pdf_parser.parsers.grobid_tei import parse_grobid_tei_to_candidate
 from pdf_parser.parsers.mineru_api_adapter import parse_pdf_with_mineru_api
 from pdf_parser.export.json_writer import write_pretty_json
 
-# PyMuPDF
-candidate = parse_pdf_with_pymupdf(Path("paper.pdf"))
+# GROBID (TEI XML already produced by grobid process)
+candidate = parse_grobid_tei_to_candidate(Path("paper.tei.xml"), Path("paper.pdf"))
 
 # MinerU API (token from MINERU_API_TOKEN env var)
 candidate = parse_pdf_with_mineru_api(
