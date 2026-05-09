@@ -599,9 +599,10 @@ def test_cli_mineru_parse_writes_pretty_json(tmp_path):
         from pdf_parser.parsers.mineru_api_adapter import parse_mineru_output_to_candidate
         return parse_mineru_output_to_candidate(extract_dir, input_pdf_path=pdf_path)
 
-    with patch("pdf_parser.parsers.mineru_api_adapter.parse_pdf_with_mineru_api", side_effect=fake_parse):
+    with patch("pdf_parser.cli.get_registered_pdf", return_value=pdf), \
+         patch("pdf_parser.parsers.mineru_api_adapter.parse_pdf_with_mineru_api", side_effect=fake_parse):
         from pdf_parser.cli import main
-        main(["mineru", "parse", "--pdf", str(pdf), "--work-dir", str(work), "--out", str(out)])
+        main(["mineru", "parse", "--paper-id", "pdf_fake12345678901a", "--work-dir", str(work), "--out", str(out)])
 
     assert out.exists()
     raw = out.read_text()

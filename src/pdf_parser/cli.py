@@ -13,8 +13,10 @@ from pdf_parser.grobid.runtime import (
     process_pdf_to_tei,
 )
 from pdf_parser.parsers.grobid_tei import parse_grobid_tei_to_candidate
+from pdf_parser.registry import get_registered_pdf, register_paper
 
 _DEFAULT_URL = "http://localhost:8070"
+_DEFAULT_PAPERS_DIR = "data/registered_pdfs"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -24,6 +26,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    # ---- register -----------------------------------------------------------
+    reg = subparsers.add_parser("register", help="Register a PDF and assign a paper ID")
+    reg.add_argument("--pdf", required=True, help="Path to PDF to register")
+    reg.add_argument(
+        "--papers-dir",
+        default=_DEFAULT_PAPERS_DIR,
+        help=f"Registered PDFs directory (default: {_DEFAULT_PAPERS_DIR})",
+    )
+
+    # ---- grobid -------------------------------------------------------------
     grobid = subparsers.add_parser("grobid", help="GROBID-related commands")
     grobid_sub = grobid.add_subparsers(dest="grobid_command")
 
@@ -32,8 +44,13 @@ def _build_parser() -> argparse.ArgumentParser:
     check.add_argument("--url", default=_DEFAULT_URL, help="GROBID base URL")
 
     # grobid process
-    process = grobid_sub.add_parser("process", help="Convert a single PDF to TEI XML")
-    process.add_argument("--pdf", required=True, help="Path to input PDF")
+    process = grobid_sub.add_parser("process", help="Convert a registered PDF to TEI XML")
+    process.add_argument("--paper-id", required=True, help="Registered paper ID")
+    process.add_argument(
+        "--papers-dir",
+        default=_DEFAULT_PAPERS_DIR,
+        help=f"Registered PDFs directory (default: {_DEFAULT_PAPERS_DIR})",
+    )
     process.add_argument("--out", required=True, help="Path for output TEI XML")
     process.add_argument("--url", default=_DEFAULT_URL, help="GROBID base URL")
 
@@ -49,15 +66,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parse_tei.add_argument("--tei", required=True, help="Path to input .tei.xml file")
     parse_tei.add_argument("--out", required=True, help="Path for output JSON file")
-    parse_tei.add_argument("--pdf", default=None, help="Original PDF path (for input_sha256)")
+    parse_tei.add_argument(
+        "--paper-id",
+        default=None,
+        help="Registered paper ID (used to look up the PDF for input_sha256)",
+    )
+    parse_tei.add_argument(
+        "--papers-dir",
+        default=_DEFAULT_PAPERS_DIR,
+        help=f"Registered PDFs directory (default: {_DEFAULT_PAPERS_DIR})",
+    )
 
-    # mineru
+    # ---- mineru -------------------------------------------------------------
     mineru = subparsers.add_parser("mineru", help="MinerU API-related commands")
     mineru_sub = mineru.add_subparsers(dest="mineru_command")
 
     # mineru parse
-    mn_parse = mineru_sub.add_parser("parse", help="Parse a PDF via the MinerU cloud API")
-    mn_parse.add_argument("--pdf", required=True, help="Path to input PDF")
+    mn_parse = mineru_sub.add_parser("parse", help="Parse a registered PDF via the MinerU cloud API")
+    mn_parse.add_argument("--paper-id", required=True, help="Registered paper ID")
+    mn_parse.add_argument(
+        "--papers-dir",
+        default=_DEFAULT_PAPERS_DIR,
+        help=f"Registered PDFs directory (default: {_DEFAULT_PAPERS_DIR})",
+    )
     mn_parse.add_argument("--work-dir", required=True, help="Working directory for raw API output")
     mn_parse.add_argument("--out", required=True, help="Path for output ParsedCandidate JSON")
 
@@ -68,7 +99,11 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "grobid":
+    if args.command == "register":
+        paper_id = register_paper(Path(args.pdf), Path(args.papers_dir))
+        print(paper_id)
+
+    elif args.command == "grobid":
         if args.grobid_command == "check":
             alive = check_grobid_alive(args.url)
             if alive:
@@ -79,7 +114,8 @@ def main(argv: list[str] | None = None) -> None:
                 sys.exit(1)
 
         elif args.grobid_command == "process":
-            output = process_pdf_to_tei(Path(args.pdf), Path(args.out), args.url)
+            pdf_path = get_registered_pdf(args.paper_id, Path(args.papers_dir))
+            output = process_pdf_to_tei(pdf_path, Path(args.out), args.url)
             print(f"TEI written to: {output}")
 
         elif args.grobid_command == "batch":
@@ -90,7 +126,11 @@ def main(argv: list[str] | None = None) -> None:
                 print(str(p))
 
         elif args.grobid_command == "parse-tei":
-            pdf_path = Path(args.pdf) if args.pdf else None
+            pdf_path = (
+                get_registered_pdf(args.paper_id, Path(args.papers_dir))
+                if args.paper_id
+                else None
+            )
             candidate = parse_grobid_tei_to_candidate(Path(args.tei), pdf_path)
             out_path = Path(args.out)
             write_pretty_json(out_path, candidate.model_dump(mode="json"))
@@ -102,7 +142,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "mineru":
         if args.mineru_command == "parse":
             from pdf_parser.parsers.mineru_api_adapter import parse_pdf_with_mineru_api
-            candidate = parse_pdf_with_mineru_api(Path(args.pdf), Path(args.work_dir))
+            pdf_path = get_registered_pdf(args.paper_id, Path(args.papers_dir))
+            candidate = parse_pdf_with_mineru_api(pdf_path, Path(args.work_dir))
             out_path = Path(args.out)
             write_pretty_json(out_path, candidate.model_dump(mode="json"))
             print(f"ParsedCandidate written to: {out_path}")

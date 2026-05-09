@@ -2,6 +2,8 @@
 
 A pipeline for parsing scientific and biomedical PDFs using GROBID and the MinerU cloud API. Both parsers produce a unified `ParsedCandidate` schema suitable for downstream LLM evidence extraction.
 
+Every PDF is first **registered** to receive a stable `paper_id`. The paper ID is the identity of the paper throughout the pipeline.
+
 Supported backends:
 
 | Backend | What it does | Requires |
@@ -22,20 +24,10 @@ Local:  /ShangGaoAIProjects/PDF_parser
 
 ## Setup
 
-### Python environments
-
-Two micromamba environments are used because MinerU requires `pillow>=11` while Marker requires `pillow<11`.
-
-**Main environment** — used for everything except local MinerU:
+### Python environment
 
 ```bash
 micromamba activate PDF_parser
-```
-
-**MinerU environment** — only needed if running MinerU locally (not needed for the API adapter):
-
-```bash
-micromamba activate PDF_parser_mineru
 ```
 
 ### Install the package (editable)
@@ -62,9 +54,48 @@ All tests use mocks. No external services or API tokens are required.
 
 ## CLI reference
 
-The entry point is `pdf-parser`. Every command writes a pretty-printed JSON file conforming to `ParsedCandidate`.
+The entry point is `pdf-parser`. Every parse command writes a pretty-printed JSON file conforming to `ParsedCandidate`.
 
-### GROBID
+### Step 1 — Register a PDF
+
+Before parsing, register the PDF to assign it a stable `paper_id`:
+
+```bash
+pdf-parser register --pdf data/raw_pdfs/paper.pdf
+# → pdf_16edbbde296287d6
+```
+
+The PDF is **moved** to `data/registered_pdfs/{paper_id}.pdf` and recorded in `data/registered_pdfs/registry.json`.
+
+Registration is **idempotent**: the same file content always produces the same `paper_id`.
+
+```bash
+# Custom papers directory
+pdf-parser register \
+  --pdf        data/raw_pdfs/paper.pdf \
+  --papers-dir data/registered_pdfs
+```
+
+#### `registry.json` format
+
+```json
+{
+  "pdf_16edbbde296287d6": {
+    "original_filename": "paper.pdf",
+    "paper_id": "pdf_16edbbde296287d6",
+    "registered_at": "2026-05-08T10:00:00+00:00",
+    "sha256": "16edbbde296287d6..."
+  }
+}
+```
+
+---
+
+### Step 2 — Parse
+
+All parse commands take `--paper-id` (and optionally `--papers-dir`).
+
+#### GROBID
 
 GROBID runs as a Docker service. Start it first:
 
@@ -80,20 +111,20 @@ pdf-parser grobid check
 # or: curl http://localhost:8070/api/isalive  →  true
 ```
 
-Convert one PDF to TEI XML, then parse it:
+Convert a registered PDF to TEI XML, then parse to `ParsedCandidate`:
 
 ```bash
 pdf-parser grobid process \
-  --pdf  data/raw_pdfs/paper.pdf \
-  --out  data/grobid_tei/paper.tei.xml
+  --paper-id pdf_16edbbde296287d6 \
+  --out      data/grobid_tei/pdf_16edbbde296287d6.tei.xml
 
 pdf-parser grobid parse-tei \
-  --tei  data/grobid_tei/paper.tei.xml \
-  --pdf  data/raw_pdfs/paper.pdf \
-  --out  data/parsed_candidates/grobid/paper.json
+  --tei      data/grobid_tei/pdf_16edbbde296287d6.tei.xml \
+  --paper-id pdf_16edbbde296287d6 \
+  --out      data/parsed_candidates/grobid/pdf_16edbbde296287d6.json
 ```
 
-Batch convert a directory of PDFs to TEI XML:
+Batch convert a directory of raw PDFs to TEI XML (does not use the registry):
 
 ```bash
 pdf-parser grobid batch \
@@ -107,7 +138,7 @@ Stop GROBID when done:
 docker stop grobid
 ```
 
-### MinerU API
+#### MinerU API
 
 Requires an API token from [mineru.net](https://mineru.net). Set it as an environment variable — never hard-code it.
 
@@ -115,9 +146,9 @@ Requires an API token from [mineru.net](https://mineru.net). Set it as an enviro
 export MINERU_API_TOKEN="your-token-here"
 
 pdf-parser mineru parse \
-  --pdf       data/raw_pdfs/paper.pdf \
-  --work-dir  data/mineru_work \
-  --out       data/parsed_candidates/mineru_api/paper.json
+  --paper-id pdf_16edbbde296287d6 \
+  --work-dir data/mineru_work \
+  --out      data/parsed_candidates/mineru_api/pdf_16edbbde296287d6.json
 ```
 
 `--work-dir` is a scratch directory where the raw result ZIP is downloaded and extracted before parsing. It is safe to reuse across runs.
@@ -125,7 +156,7 @@ pdf-parser mineru parse \
 The adapter prints progress:
 
 ```
-[mineru] Registering paper.pdf (1,313,897 bytes, model=vlm)...
+[mineru] Registering pdf_16edbbde296287d6.pdf (1,313,897 bytes, model=vlm)...
 [mineru] Uploading to OSS (batch_id=d13d548c-...)...
 [mineru] Upload complete. Polling for extraction result...
 [mineru] batch_id=d13d548c-... state='pending'
@@ -134,26 +165,97 @@ The adapter prints progress:
 [mineru] Extraction done. Downloading result ZIP...
 [mineru] ZIP downloaded (1,214,663 bytes). Extracting...
 [mineru] Extraction complete. Parsing output...
-ParsedCandidate written to: data/parsed_candidates/mineru_api/paper.json
+ParsedCandidate written to: data/parsed_candidates/mineru_api/pdf_16edbbde296287d6.json
 ```
 
-#### Run all PDFs
+---
+
+## Batch processing all PDFs
+
+The commands below skip any PDF that already has an output JSON, so they are safe to re-run after a partial run.
+
+Run everything from the repo root with the `PDF_parser` environment active (or prefix each command with `/home/sgao30/micromamba/bin/micromamba run -n PDF_parser`).
+
+### Register all PDFs
 
 ```bash
+mkdir -p data/registered_pdfs
+
 for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/mineru_api/${stem}.json"
-  if [ -f "$out" ]; then
-    echo "=== $stem — already done, skipping ==="
-    continue
-  fi
-  echo "=== $stem ==="
+  echo "=== register $(basename "$pdf") ==="
+  pdf-parser register --pdf "$pdf"
+done
+```
+
+### 1. GROBID
+
+Start the Docker service first (see above), then:
+
+```bash
+mkdir -p data/grobid_tei data/parsed_candidates/grobid
+
+for paper_id in $(jq -r 'keys[]' data/registered_pdfs/registry.json); do
+  out="data/parsed_candidates/grobid/${paper_id}.json"
+  [ -f "$out" ] && echo "skip $paper_id" && continue
+  echo "=== grobid $paper_id ==="
+  pdf-parser grobid process \
+    --paper-id "$paper_id" \
+    --out      "data/grobid_tei/${paper_id}.tei.xml"
+  pdf-parser grobid parse-tei \
+    --tei      "data/grobid_tei/${paper_id}.tei.xml" \
+    --paper-id "$paper_id" \
+    --out      "$out"
+done
+```
+
+### 2. MinerU API
+
+Requires `MINERU_API_TOKEN`. Each PDF takes ~30–60 s (upload + cloud processing). Run sequentially to stay within rate limits.
+
+```bash
+export MINERU_API_TOKEN="your-token-here"
+mkdir -p data/parsed_candidates/mineru_api data/mineru_work
+
+for paper_id in $(jq -r 'keys[]' data/registered_pdfs/registry.json); do
+  out="data/parsed_candidates/mineru_api/${paper_id}.json"
+  [ -f "$out" ] && echo "skip $paper_id" && continue
+  echo "=== mineru $paper_id ==="
   pdf-parser mineru parse \
-    --pdf      "$pdf" \
+    --paper-id "$paper_id" \
     --work-dir data/mineru_work \
     --out      "$out"
 done
 ```
+
+### Run both in sequence
+
+```bash
+export MINERU_API_TOKEN="your-token-here"
+
+mkdir -p data/parsed_candidates/{grobid,mineru_api} \
+         data/grobid_tei data/mineru_work
+
+for paper_id in $(jq -r 'keys[]' data/registered_pdfs/registry.json); do
+  echo ""
+  echo "==============================="
+  echo "Paper: $paper_id"
+  echo "==============================="
+
+  tei="data/grobid_tei/${paper_id}.tei.xml"
+  out="data/parsed_candidates/grobid/${paper_id}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser grobid process --paper-id "$paper_id" --out "$tei"
+    pdf-parser grobid parse-tei --tei "$tei" --paper-id "$paper_id" --out "$out"
+  fi
+
+  out="data/parsed_candidates/mineru_api/${paper_id}.json"
+  if [ ! -f "$out" ]; then
+    pdf-parser mineru parse --paper-id "$paper_id" --work-dir data/mineru_work --out "$out"
+  fi
+done
+```
+
+> GROBID must be running before the loop starts.
 
 ---
 
@@ -166,8 +268,8 @@ Every parser writes a JSON file with this structure:
   "provenance": {
     "parser_name": "mineru_api",
     "parser_version": "unknown",
-    "created_at": "2026-05-02T10:25:43.123456+00:00",
-    "input_sha256": "abc123...",
+    "created_at": "2026-05-08T10:25:43.123456+00:00",
+    "input_sha256": "16edbbde296287d6...",
     "output_sha256": "def456..."
   },
   "metadata": {
@@ -188,10 +290,10 @@ Every parser writes a JSON file with this structure:
       "bbox": [72.0, 100.0, 300.0, 115.0],
       "block_type": "heading",
       "reading_order": 1,
-      "font_size": 14.0,
-      "font_name": "Arial-Bold",
-      "is_bold": true,
-      "source_parser": "pymupdf_native"
+      "font_size": null,
+      "font_name": null,
+      "is_bold": null,
+      "source_parser": "grobid_tei"
     }
   ],
   "sections": [
@@ -206,7 +308,7 @@ Every parser writes a JSON file with this structure:
       "start_page": 1,
       "end_page": 2,
       "confidence": null,
-      "source_parser": "pymupdf_native"
+      "source_parser": "grobid_tei"
     }
   ],
   "figures": [
@@ -229,90 +331,11 @@ Every parser writes a JSON file with this structure:
 
 Field notes:
 
-- `block_type`: `"text"` | `"heading"` | `"image"` | `"table"`
+- `block_type`: `"text"` | `"heading"`
 - `bbox`: `[x0, y0, x1, y1]` in PDF points; `null` when not available from that parser
 - `sections[].block_ids`: ordered list of block IDs belonging to this section
 - `sections[].text`: concatenated text of all body blocks under this section
 - `provenance.output_sha256`: SHA-256 of the canonical (sorted-keys) JSON of the output, computed at write time
-
----
-
-## Batch processing all PDFs
-
-The commands below skip any PDF that already has an output JSON, so they are safe to re-run after a partial run.
-
-Run everything from the repo root with the `PDF_parser` environment active (or prefix each command with `/home/sgao30/micromamba/bin/micromamba run -n PDF_parser`).
-
-### 1. GROBID
-
-Start the Docker service first (see the GROBID section above), then:
-
-```bash
-mkdir -p data/grobid_tei data/parsed_candidates/grobid
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/grobid/${stem}.json"
-  [ -f "$out" ] && echo "skip $stem" && continue
-  echo "=== grobid $stem ==="
-  pdf-parser grobid process --pdf "$pdf" --out "data/grobid_tei/${stem}.tei.xml"
-  pdf-parser grobid parse-tei \
-    --tei "data/grobid_tei/${stem}.tei.xml" \
-    --pdf "$pdf" \
-    --out "$out"
-done
-```
-
-### 2. MinerU API
-
-Requires `MINERU_API_TOKEN`. Each PDF takes ~30–60 s (upload + cloud processing). Run sequentially to stay within rate limits.
-
-```bash
-export MINERU_API_TOKEN="your-token-here"
-mkdir -p data/parsed_candidates/mineru_api data/mineru_work
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  out="data/parsed_candidates/mineru_api/${stem}.json"
-  [ -f "$out" ] && echo "skip $stem" && continue
-  echo "=== mineru $stem ==="
-  pdf-parser mineru parse \
-    --pdf      "$pdf" \
-    --work-dir data/mineru_work \
-    --out      "$out"
-done
-```
-
-### Run both in sequence
-
-```bash
-export MINERU_API_TOKEN="your-token-here"
-
-mkdir -p data/parsed_candidates/{grobid,mineru_api} \
-         data/grobid_tei data/mineru_work
-
-for pdf in data/raw_pdfs/*.pdf; do
-  stem=$(basename "$pdf" .pdf)
-  echo ""
-  echo "==============================="
-  echo "PDF: $stem"
-  echo "==============================="
-
-  tei="data/grobid_tei/${stem}.tei.xml"
-  out="data/parsed_candidates/grobid/${stem}.json"
-  if [ ! -f "$out" ]; then
-    pdf-parser grobid process --pdf "$pdf" --out "$tei"
-    pdf-parser grobid parse-tei --tei "$tei" --pdf "$pdf" --out "$out"
-  fi
-
-  out="data/parsed_candidates/mineru_api/${stem}.json"
-  if [ ! -f "$out" ]; then
-    pdf-parser mineru parse --pdf "$pdf" --work-dir data/mineru_work --out "$out"
-  fi
-done
-```
-
-> GROBID must be running before the loop starts.
 
 ---
 
@@ -321,6 +344,7 @@ done
 ```
 src/pdf_parser/
 ├── cli.py                   # pdf-parser entry point
+├── registry.py              # register_paper, get_registered_pdf
 ├── schema/
 │   ├── candidate.py         # ParsedCandidate and all sub-models (Pydantic v2)
 │   └── hashes.py            # sha256_file, compute_candidate_output_sha256
@@ -337,7 +361,8 @@ tests/
 └── test_*.py                # One test file per module; all mocked
 
 data/                        # Not committed to Git
-├── raw_pdfs/
+├── raw_pdfs/                # Original PDFs (before registration)
+├── registered_pdfs/         # Registered PDFs named by paper_id; registry.json
 ├── grobid_tei/
 ├── parsed_candidates/
 │   ├── grobid/
@@ -352,17 +377,24 @@ data/                        # Not committed to Git
 
 ```python
 from pathlib import Path
+from pdf_parser.registry import register_paper, get_registered_pdf
 from pdf_parser.parsers.grobid_tei import parse_grobid_tei_to_candidate
 from pdf_parser.parsers.mineru_api_adapter import parse_pdf_with_mineru_api
 from pdf_parser.export.json_writer import write_pretty_json
 
+# Register
+paper_id = register_paper(Path("paper.pdf"), Path("data/registered_pdfs"))
+pdf_path = get_registered_pdf(paper_id, Path("data/registered_pdfs"))
+
 # GROBID (TEI XML already produced by grobid process)
-candidate = parse_grobid_tei_to_candidate(Path("paper.tei.xml"), Path("paper.pdf"))
+candidate = parse_grobid_tei_to_candidate(
+    Path(f"data/grobid_tei/{paper_id}.tei.xml"), pdf_path
+)
 
 # MinerU API (token from MINERU_API_TOKEN env var)
 candidate = parse_pdf_with_mineru_api(
-    pdf_path=Path("paper.pdf"),
-    work_dir=Path("mineru_work"),
+    pdf_path=pdf_path,
+    work_dir=Path("data/mineru_work"),
 )
 
 # Inspect
@@ -373,7 +405,7 @@ for sec in candidate.sections:
     print(f"  {'  ' * (sec.level - 1)}{sec.title}")
 
 # Save
-write_pretty_json(Path("output.json"), candidate.model_dump(mode="json"))
+write_pretty_json(Path(f"output/{paper_id}.json"), candidate.model_dump(mode="json"))
 ```
 
 ---
